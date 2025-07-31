@@ -1,5 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import pandas as pd
 import yfinance as yf
 from typing import List, Dict, Any, Optional
@@ -8,6 +9,9 @@ import json
 from datetime import datetime, timedelta
 import aiofiles
 import os
+import tempfile
+from difflib import SequenceMatcher
+import numpy as np
 
 app = FastAPI(title="ICE ETF Analyzer", description="Automated ICE data analysis for ETF front-running opportunities")
 
@@ -23,6 +27,7 @@ app.add_middleware(
 processed_data_store = {}
 historical_data_store = {}
 pff_data_store = {}
+analysis_results = {}
 
 @app.get("/healthz")
 async def healthz():
@@ -187,6 +192,10 @@ async def analyze_comparison(ice_timestamp: str, pff_timestamp: Optional[str] = 
         analysis = perform_comparison_analysis(ice_data, pff_data)
         
         processed_data_store[ice_timestamp]["analysis"] = analysis
+        processed_data_store[ice_timestamp]["has_analysis"] = True
+        
+        filename = processed_data_store[ice_timestamp]["filename"]
+        analysis_results[filename] = analysis
         
         return {
             "message": "Analysis completed successfully",
@@ -208,7 +217,7 @@ async def get_processed_data():
                 "filename": data["filename"],
                 "sheets": data.get("sheet_info", {}),
                 "has_processed_data": data["processed_data"] is not None,
-                "has_analysis": data["analysis"] is not None
+                "has_analysis": data.get("has_analysis", False)
             }
             for ts, data in processed_data_store.items()
         ]
@@ -225,6 +234,139 @@ async def get_sheet_info(timestamp: str):
         "filename": processed_data_store[timestamp]["filename"],
         "sheets": processed_data_store[timestamp].get("sheet_info", {})
     }
+
+@app.get("/export/analysis/{filename}")
+async def export_analysis(filename: str):
+    """Export analysis results to Excel file"""
+    timestamp_entry = None
+    for timestamp, data in processed_data_store.items():
+        if data.get("filename") == filename and data.get("has_analysis"):
+            timestamp_entry = data
+            break
+    
+    if not timestamp_entry:
+        raise HTTPException(status_code=404, detail="Analysis not found for this file")
+    
+    analysis = timestamp_entry["analysis"]
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+        temp_path = tmp_file.name
+    
+    try:
+        with pd.ExcelWriter(temp_path, engine='openpyxl') as writer:
+            summary_data = {
+                'Metric': ['Securities Count', 'PFF Current Price', 'Trading Signals', 'Analysis Timestamp'],
+                'Value': [
+                    analysis.get('ice_securities_count', 0),
+                    f"${analysis.get('pff_current_price', 0)}",
+                    len(analysis.get('trading_signals', [])),
+                    analysis.get('timestamp', '')
+                ]
+            }
+            summary_df = pd.DataFrame(summary_data)
+            summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            
+            if analysis.get('trading_signals'):
+                signals_df = pd.DataFrame(analysis['trading_signals'])
+                signals_df.to_excel(writer, sheet_name='Trading_Signals', index=False)
+            
+            if analysis.get('opportunities'):
+                opportunities_df = pd.DataFrame(analysis['opportunities'])
+                opportunities_df.to_excel(writer, sheet_name='Opportunities', index=False)
+            
+            if analysis.get('recommendations'):
+                recommendations_df = pd.DataFrame(analysis['recommendations'])
+                recommendations_df.to_excel(writer, sheet_name='Recommendations', index=False)
+            
+            if analysis.get('position_sizing'):
+                position_data = {
+                    'Metric': ['PFF Market Cap', 'Total ICE Exposure', 'Recommended Position Size', 'Risk Per Trade', 'Diversification Note'],
+                    'Value': [
+                        analysis['position_sizing'].get('pff_market_cap', 0),
+                        analysis['position_sizing'].get('total_ice_exposure', 0),
+                        analysis['position_sizing'].get('recommended_position_size', 0),
+                        analysis['position_sizing'].get('risk_per_trade', ''),
+                        analysis['position_sizing'].get('diversification_note', '')
+                    ]
+                }
+                position_df = pd.DataFrame(position_data)
+                position_df.to_excel(writer, sheet_name='Position_Sizing', index=False)
+            
+            if analysis.get('timing_analysis'):
+                timing_data = {
+                    'Metric': ['Rebalancing Frequency', 'Optimal Entry Window', 'Exit Strategy', 'Monitoring Frequency', 'Next Rebalancing Estimate'],
+                    'Value': [
+                        analysis['timing_analysis'].get('rebalancing_frequency', ''),
+                        analysis['timing_analysis'].get('optimal_entry_window', ''),
+                        analysis['timing_analysis'].get('exit_strategy', ''),
+                        analysis['timing_analysis'].get('monitoring_frequency', ''),
+                        analysis['timing_analysis'].get('next_rebalancing_estimate', '')
+                    ]
+                }
+                timing_df = pd.DataFrame(timing_data)
+                timing_df.to_excel(writer, sheet_name='Timing_Analysis', index=False)
+        
+        export_filename = f"ice_analysis_{filename.replace('.xlsx', '')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        return FileResponse(
+            path=temp_path,
+            filename=export_filename,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise HTTPException(status_code=500, detail=f"Error creating Excel file: {str(e)}")
+
+@app.get("/export/trading-signals/{filename}")
+async def export_trading_signals(filename: str):
+    """Export only trading signals to Excel file"""
+    timestamp_entry = None
+    for timestamp, data in processed_data_store.items():
+        if data.get("filename") == filename and data.get("has_analysis"):
+            timestamp_entry = data
+            break
+    
+    if not timestamp_entry:
+        raise HTTPException(status_code=404, detail="Analysis not found for this file")
+    
+    analysis = timestamp_entry["analysis"]
+    trading_signals = analysis.get('trading_signals', [])
+    
+    if not trading_signals:
+        raise HTTPException(status_code=404, detail="No trading signals found")
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_file:
+        temp_path = tmp_file.name
+    
+    try:
+        signals_df = pd.DataFrame(trading_signals)
+        
+        buy_signals = signals_df[signals_df['action'] == 'BUY'].copy()
+        sell_signals = signals_df[signals_df['action'] == 'SELL/SHORT'].copy()
+        
+        with pd.ExcelWriter(temp_path, engine='openpyxl') as writer:
+            signals_df.to_excel(writer, sheet_name='All_Signals', index=False)
+            
+            if not buy_signals.empty:
+                buy_signals.to_excel(writer, sheet_name='Buy_Signals', index=False)
+            
+            if not sell_signals.empty:
+                sell_signals.to_excel(writer, sheet_name='Sell_Signals', index=False)
+        
+        export_filename = f"trading_signals_{filename.replace('.xlsx', '')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+        
+        return FileResponse(
+            path=temp_path,
+            filename=export_filename,
+            media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
+    
+    except Exception as e:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+        raise HTTPException(status_code=500, detail=f"Error creating Excel file: {str(e)}")
 
 def clean_ice_data(df: pd.DataFrame) -> pd.DataFrame:
     """Clean and standardize ICE data"""
@@ -285,6 +427,25 @@ def match_securities_by_description(ice_data: List[Dict], pff_holdings: List[Dic
     
     return matches
 
+def get_next_quarter_end() -> str:
+    """Calculate the next quarter end date for rebalancing timing"""
+    from datetime import datetime, timedelta
+    import calendar
+    
+    now = datetime.now()
+    quarter_ends = [
+        datetime(now.year, 3, 31),
+        datetime(now.year, 6, 30), 
+        datetime(now.year, 9, 30),
+        datetime(now.year, 12, 31)
+    ]
+    
+    for quarter_end in quarter_ends:
+        if quarter_end > now:
+            return quarter_end.strftime("%Y-%m-%d")
+    
+    return datetime(now.year + 1, 3, 31).strftime("%Y-%m-%d")
+
 def perform_comparison_analysis(ice_data: List[Dict], pff_data: Dict) -> Dict[str, Any]:
     """Perform detailed comparison analysis between ICE data and PFF ETF data"""
     
@@ -297,7 +458,10 @@ def perform_comparison_analysis(ice_data: List[Dict], pff_data: Dict) -> Dict[st
         "delta_analysis": {},
         "liquidity_assessment": {},
         "flow_analysis": {},
-        "recommendations": []
+        "recommendations": [],
+        "trading_signals": [],
+        "position_sizing": {},
+        "timing_analysis": {}
     }
     
     df = pd.DataFrame(ice_data)
@@ -369,6 +533,42 @@ def perform_comparison_analysis(ice_data: List[Dict], pff_data: Dict) -> Dict[st
             }
         ]
         
+        trading_signals = []
+        
+        if 'symbol' in df.columns and 'weight' in df.columns:
+            if pd.api.types.is_numeric_dtype(df['weight']):
+                high_weight_threshold = df['weight'].quantile(0.8)
+                potential_additions = df[df['weight'] > high_weight_threshold]
+                
+                for _, security in potential_additions.iterrows():
+                    signal = {
+                        "ticker": security.get('symbol', 'N/A'),
+                        "action": "BUY",
+                        "reasoning": f"High weight ({security.get('weight', 0):.2f}%) suggests likely PFF addition",
+                        "confidence": "HIGH" if security.get('weight', 0) > df['weight'].quantile(0.9) else "MEDIUM",
+                        "target_allocation": f"{security.get('weight', 0):.2f}%",
+                        "sector": security.get('sector', 'Unknown'),
+                        "dividend_yield": security.get('dividend_yield', 'N/A')
+                    }
+                    trading_signals.append(signal)
+        
+        if 'weight' in df.columns and pd.api.types.is_numeric_dtype(df['weight']):
+            low_weight_threshold = df['weight'].quantile(0.2)
+            potential_removals = df[df['weight'] < low_weight_threshold]
+            
+            for _, security in potential_removals.iterrows():
+                signal = {
+                    "ticker": security.get('symbol', 'N/A'),
+                    "action": "SELL/SHORT",
+                    "reasoning": f"Low weight ({security.get('weight', 0):.2f}%) suggests likely PFF removal",
+                    "confidence": "MEDIUM",
+                    "target_allocation": f"{security.get('weight', 0):.2f}%",
+                    "sector": security.get('sector', 'Unknown')
+                }
+                trading_signals.append(signal)
+        
+        analysis["trading_signals"] = trading_signals
+        
         risks = []
         
         if 'credit_rating' in df.columns:
@@ -407,21 +607,50 @@ def perform_comparison_analysis(ice_data: List[Dict], pff_data: Dict) -> Dict[st
                 "price_sensitivity": float(total_market_value / pff_price) if pff_price and total_market_value else 0
             }
         
+        pff_market_cap = pff_data.get("info", {}).get("marketCap", 13000000000)
+        total_ice_value = analysis.get("total_market_value", 0)
+        
+        position_sizing = {
+            "pff_market_cap": pff_market_cap,
+            "total_ice_exposure": total_ice_value,
+            "recommended_position_size": min(pff_market_cap * 0.01, 1000000),
+            "risk_per_trade": "2% of portfolio maximum",
+            "diversification_note": "Spread across 5-10 top signals to reduce single-security risk"
+        }
+        analysis["position_sizing"] = position_sizing
+        
+        timing_analysis = {
+            "rebalancing_frequency": "Quarterly (March, June, September, December)",
+            "optimal_entry_window": "2-4 weeks before quarter end",
+            "exit_strategy": "Within 1 week of rebalancing announcement",
+            "monitoring_frequency": "Weekly weight tracking recommended",
+            "next_rebalancing_estimate": get_next_quarter_end()
+        }
+        analysis["timing_analysis"] = timing_analysis
+        
         recommendations = []
         
-        if opportunities:
-            if any(opp["type"] == "high_weight_rebalancing" for opp in opportunities):
+        if trading_signals:
+            buy_signals = [s for s in trading_signals if s["action"] == "BUY"]
+            sell_signals = [s for s in trading_signals if s["action"] == "SELL/SHORT"]
+            
+            if buy_signals:
+                high_confidence_buys = [s for s in buy_signals if s["confidence"] == "HIGH"]
                 recommendations.append({
-                    "action": "monitor_rebalancing",
-                    "description": "Monitor high-weight securities for potential PFF rebalancing activity",
-                    "priority": "high"
+                    "action": "IMMEDIATE_BUY",
+                    "description": f"Execute buy orders for {len(high_confidence_buys)} high-confidence securities: {', '.join([s['ticker'] for s in high_confidence_buys[:3]])}{'...' if len(high_confidence_buys) > 3 else ''}",
+                    "priority": "high",
+                    "tickers": [s["ticker"] for s in high_confidence_buys],
+                    "reasoning": "High weight allocation suggests imminent PFF inclusion"
                 })
             
-            if any(opp["type"] == "high_dividend_yield" for opp in opportunities):
+            if sell_signals:
                 recommendations.append({
-                    "action": "yield_opportunity",
-                    "description": "Consider positioning for high-yield securities before rebalancing",
-                    "priority": "medium"
+                    "action": "MONITOR_FOR_SHORT",
+                    "description": f"Monitor {len(sell_signals)} securities for shorting opportunities: {', '.join([s['ticker'] for s in sell_signals[:3]])}{'...' if len(sell_signals) > 3 else ''}",
+                    "priority": "medium",
+                    "tickers": [s["ticker"] for s in sell_signals],
+                    "reasoning": "Low weight allocation suggests potential PFF removal"
                 })
         
         if risks:
@@ -434,9 +663,9 @@ def perform_comparison_analysis(ice_data: List[Dict], pff_data: Dict) -> Dict[st
         
         if not recommendations:
             recommendations.append({
-                "action": "monitor",
-                "description": "Continue monitoring for rebalancing signals",
-                "priority": "medium"
+                "action": "CONTINUE_MONITORING",
+                "description": "No immediate trading signals detected. Continue monitoring for weight changes.",
+                "priority": "low"
             })
         
         analysis["recommendations"] = recommendations

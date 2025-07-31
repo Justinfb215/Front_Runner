@@ -28,7 +28,27 @@ interface AnalysisResult {
     action: string;
     description: string;
     priority: string;
+    tickers?: string[];
   }>;
+  trading_signals?: Array<{
+    ticker: string;
+    action: string;
+    reasoning: string;
+    confidence: string;
+    target_allocation: string;
+    sector: string;
+    dividend_yield?: string;
+  }>;
+  position_sizing?: {
+    recommended_position_size: number;
+    risk_per_trade: string;
+    diversification_note: string;
+  };
+  timing_analysis?: {
+    next_rebalancing_estimate: string;
+    optimal_entry_window: string;
+    exit_strategy: string;
+  };
   total_market_value?: number;
   weight_distribution?: any;
 }
@@ -150,6 +170,44 @@ function App() {
       }
     } catch (error) {
       setUploadMessage('Network error during analysis');
+    }
+  };
+
+  const handleExportAnalysis = async (type: 'full' | 'signals') => {
+    if (!currentAnalysis) return;
+    
+    const analysisFile = processedData.find(d => d.has_analysis);
+    if (!analysisFile) return;
+    
+    try {
+      const endpoint = type === 'full' 
+        ? `/export/analysis/${analysisFile.filename}`
+        : `/export/trading-signals/${analysisFile.filename}`;
+      
+      const response = await fetch(`${API_BASE_URL}${endpoint}`);
+      
+      if (response.ok) {
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        
+        const contentDisposition = response.headers.get('content-disposition');
+        const filename = contentDisposition 
+          ? contentDisposition.split('filename=')[1]?.replace(/"/g, '')
+          : `ice_analysis_${Date.now()}.xlsx`;
+        
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        document.body.removeChild(a);
+      } else {
+        console.error('Export failed:', response.statusText);
+      }
+    } catch (error) {
+      console.error('Export error:', error);
     }
   };
 
@@ -318,10 +376,73 @@ function App() {
                         <p className="text-2xl font-bold text-green-700">${currentAnalysis.pff_current_price?.toFixed(2)}</p>
                       </div>
                       <div className="bg-purple-50 p-4 rounded-lg">
-                        <h3 className="font-semibold text-purple-900">Opportunities</h3>
-                        <p className="text-2xl font-bold text-purple-700">{currentAnalysis.opportunities.length}</p>
+                        <h3 className="font-semibold text-purple-900">Trading Signals</h3>
+                        <p className="text-2xl font-bold text-purple-700">{currentAnalysis.trading_signals?.length || 0}</p>
                       </div>
                     </div>
+
+                    {currentAnalysis.trading_signals && currentAnalysis.trading_signals.length > 0 && (
+                      <div>
+                        <div className="flex justify-between items-center mb-3">
+                          <h3 className="text-lg font-semibold">Trading Signals</h3>
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={() => handleExportAnalysis('signals')}
+                          >
+                            <Download className="h-4 w-4 mr-2" />
+                            Export Signals
+                          </Button>
+                        </div>
+                        <div className="space-y-2">
+                          {currentAnalysis.trading_signals.map((signal, index) => (
+                            <div key={index} className={`p-3 border rounded-lg ${
+                              signal.action === 'BUY' ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+                            }`}>
+                              <div className="flex justify-between items-start">
+                                <div>
+                                  <p className="font-medium text-lg">{signal.ticker}</p>
+                                  <p className={`text-sm font-semibold ${
+                                    signal.action === 'BUY' ? 'text-green-700' : 'text-red-700'
+                                  }`}>{signal.action}</p>
+                                  <p className="text-sm text-gray-600">{signal.reasoning}</p>
+                                  <p className="text-xs text-gray-500">Target: {signal.target_allocation} | Sector: {signal.sector}</p>
+                                </div>
+                                <span className={`px-2 py-1 text-xs rounded-full ${
+                                  signal.confidence === 'HIGH' ? 'bg-green-100 text-green-800' :
+                                  signal.confidence === 'MEDIUM' ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-gray-100 text-gray-800'
+                                }`}>
+                                  {signal.confidence}
+                                </span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {currentAnalysis.position_sizing && (
+                      <div>
+                        <h3 className="text-lg font-semibold mb-3">Position Sizing</h3>
+                        <div className="bg-blue-50 p-4 rounded-lg">
+                          <p><strong>Recommended Position Size:</strong> ${(currentAnalysis.position_sizing.recommended_position_size / 1000000).toFixed(1)}M</p>
+                          <p><strong>Risk Per Trade:</strong> {currentAnalysis.position_sizing.risk_per_trade}</p>
+                          <p><strong>Diversification:</strong> {currentAnalysis.position_sizing.diversification_note}</p>
+                        </div>
+                      </div>
+                    )}
+
+                    {currentAnalysis.timing_analysis && (
+                      <div>
+                        <h3 className="text-lg font-semibold mb-3">Timing Analysis</h3>
+                        <div className="bg-purple-50 p-4 rounded-lg">
+                          <p><strong>Next Rebalancing:</strong> {currentAnalysis.timing_analysis.next_rebalancing_estimate}</p>
+                          <p><strong>Optimal Entry:</strong> {currentAnalysis.timing_analysis.optimal_entry_window}</p>
+                          <p><strong>Exit Strategy:</strong> {currentAnalysis.timing_analysis.exit_strategy}</p>
+                        </div>
+                      </div>
+                    )}
 
                     {currentAnalysis.opportunities.length > 0 && (
                       <div>
@@ -345,6 +466,9 @@ function App() {
                             <div key={index} className="p-3 border border-blue-200 bg-blue-50 rounded-lg">
                               <p className="font-medium text-blue-900 capitalize">{rec.action}</p>
                               <p className="text-sm text-blue-700">{rec.description}</p>
+                              {rec.tickers && (
+                                <p className="text-xs text-blue-500 mt-1">Tickers: {rec.tickers.join(', ')}</p>
+                              )}
                               <span className={`inline-block px-2 py-1 text-xs rounded-full mt-2 ${
                                 rec.priority === 'high' ? 'bg-red-100 text-red-800' :
                                 rec.priority === 'medium' ? 'bg-yellow-100 text-yellow-800' :
@@ -424,13 +548,25 @@ function App() {
                   <CardTitle className="text-lg">Quick Actions</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-2">
-                  <Button variant="outline" size="sm" className="w-full">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full"
+                    onClick={() => handleExportAnalysis('full')}
+                    disabled={!currentAnalysis}
+                  >
                     <Download className="h-4 w-4 mr-2" />
-                    Export Analysis
+                    Export Full Analysis
                   </Button>
-                  <Button variant="outline" size="sm" className="w-full">
+                  <Button 
+                    variant="outline" 
+                    size="sm" 
+                    className="w-full"
+                    onClick={() => handleExportAnalysis('signals')}
+                    disabled={!currentAnalysis || !currentAnalysis.trading_signals?.length}
+                  >
                     <BarChart3 className="h-4 w-4 mr-2" />
-                    View Reports
+                    Export Trading Signals
                   </Button>
                 </CardContent>
               </Card>
