@@ -61,6 +61,96 @@ function App() {
   const [currentAnalysis, setCurrentAnalysis] = useState<AnalysisResult | null>(null);
   const [pffData, setPffData] = useState<any>(null);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [tradingBotStatus, setTradingBotStatus] = useState<any>(null);
+  const [tradingSignals, setTradingSignals] = useState<any[]>([]);
+  const [portfolioMetrics, setPortfolioMetrics] = useState<any>(null);
+  const [riskDashboard, setRiskDashboard] = useState<any>(null);
+  const [mlPredictions, setMlPredictions] = useState<any>(null);
+
+  const fetchTradingBotStatus = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/trading-bot/status`);
+      if (response.ok) {
+        const data = await response.json();
+        setTradingBotStatus(data);
+        setPortfolioMetrics(data.performance_metrics);
+      }
+    } catch (error) {
+      console.error('Failed to fetch trading bot status:', error);
+    }
+  };
+
+  const fetchTradingSignals = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/trading-bot/signals`);
+      if (response.ok) {
+        const data = await response.json();
+        setTradingSignals(data.signals || []);
+        setMlPredictions(data.ml_predictions);
+      }
+    } catch (error) {
+      console.error('Failed to fetch trading signals:', error);
+    }
+  };
+
+  const fetchRiskDashboard = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/trading-bot/risk-dashboard`);
+      if (response.ok) {
+        const data = await response.json();
+        setRiskDashboard(data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch risk dashboard:', error);
+    }
+  };
+
+  const startTradingBot = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/trading-bot/start`, {
+        method: 'POST'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUploadMessage(`Trading Bot Started: ${data.message}`);
+        fetchTradingBotStatus();
+      }
+    } catch (error) {
+      console.error('Failed to start trading bot:', error);
+    }
+  };
+
+  const stopTradingBot = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/trading-bot/stop`, {
+        method: 'POST'
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUploadMessage(`Trading Bot Stopped: ${data.message}`);
+        fetchTradingBotStatus();
+      }
+    } catch (error) {
+      console.error('Failed to stop trading bot:', error);
+    }
+  };
+
+  const executeSignal = async (signal: any) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/trading-bot/execute-signal`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(signal)
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setUploadMessage(`Signal executed: ${data.status}`);
+        fetchTradingBotStatus();
+      }
+    } catch (error) {
+      console.error('Failed to execute signal:', error);
+    }
+  };
 
   useEffect(() => {
     fetchProcessedData();
@@ -229,11 +319,13 @@ function App() {
         )}
 
         <Tabs defaultValue="upload" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-6">
             <TabsTrigger value="upload">Data Upload</TabsTrigger>
             <TabsTrigger value="process">Data Processing</TabsTrigger>
             <TabsTrigger value="analysis">Analysis</TabsTrigger>
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
+            <TabsTrigger value="trading-bot">Trading Bot</TabsTrigger>
+            <TabsTrigger value="risk-dashboard">Risk</TabsTrigger>
           </TabsList>
 
           <TabsContent value="upload" className="space-y-6">
@@ -571,6 +663,270 @@ function App() {
                 </CardContent>
               </Card>
             </div>
+          </TabsContent>
+
+          <TabsContent value="trading-bot" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <TrendingUp className="h-5 w-5" />
+                  Super Frontrunner Trading Bot
+                </CardTitle>
+                <CardDescription>
+                  Hedge fund-level algorithmic trading with advanced quantitative strategies
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {tradingBotStatus && (
+                    <>
+                      <div className={`p-4 rounded-lg ${tradingBotStatus.is_active ? 'bg-green-50' : 'bg-red-50'}`}>
+                        <h3 className={`font-semibold ${tradingBotStatus.is_active ? 'text-green-900' : 'text-red-900'}`}>
+                          Bot Status
+                        </h3>
+                        <p className={`text-xl font-bold ${tradingBotStatus.is_active ? 'text-green-700' : 'text-red-700'}`}>
+                          {tradingBotStatus.is_active ? 'ACTIVE' : 'STOPPED'}
+                        </p>
+                      </div>
+                      <div className="bg-blue-50 p-4 rounded-lg">
+                        <h3 className="font-semibold text-blue-900">Portfolio Value</h3>
+                        <p className="text-xl font-bold text-blue-700">
+                          ${(tradingBotStatus.portfolio_value / 1000000).toFixed(2)}M
+                        </p>
+                      </div>
+                      <div className={`p-4 rounded-lg ${(tradingBotStatus.total_pnl || 0) >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                        <h3 className={`font-semibold ${(tradingBotStatus.total_pnl || 0) >= 0 ? 'text-green-900' : 'text-red-900'}`}>
+                          Total P&L
+                        </h3>
+                        <p className={`text-xl font-bold ${(tradingBotStatus.total_pnl || 0) >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                          {tradingBotStatus.pnl_percentage?.toFixed(2)}%
+                        </p>
+                      </div>
+                      <div className="bg-purple-50 p-4 rounded-lg">
+                        <h3 className="font-semibold text-purple-900">Active Positions</h3>
+                        <p className="text-xl font-bold text-purple-700">{tradingBotStatus.active_positions}</p>
+                      </div>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex gap-4">
+                  <Button 
+                    onClick={startTradingBot}
+                    disabled={tradingBotStatus?.is_active}
+                    className="bg-green-600 hover:bg-green-700"
+                  >
+                    Start Trading Bot
+                  </Button>
+                  <Button 
+                    onClick={stopTradingBot}
+                    disabled={!tradingBotStatus?.is_active}
+                    variant="destructive"
+                  >
+                    Stop Trading Bot
+                  </Button>
+                  <Button onClick={fetchTradingBotStatus} variant="outline">
+                    Refresh Status
+                  </Button>
+                  <Button onClick={fetchTradingSignals} variant="outline">
+                    Get Signals
+                  </Button>
+                </div>
+
+                {portfolioMetrics && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">Performance Metrics</h3>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div className="bg-gray-50 p-3 rounded-lg">
+                        <p className="text-sm text-gray-600">Sharpe Ratio</p>
+                        <p className="font-semibold">{portfolioMetrics.sharpe_ratio?.toFixed(2)}</p>
+                      </div>
+                      <div className="bg-gray-50 p-3 rounded-lg">
+                        <p className="text-sm text-gray-600">Win Rate</p>
+                        <p className="font-semibold">{(portfolioMetrics.win_rate * 100)?.toFixed(1)}%</p>
+                      </div>
+                      <div className="bg-gray-50 p-3 rounded-lg">
+                        <p className="text-sm text-gray-600">Max Drawdown</p>
+                        <p className="font-semibold">{(portfolioMetrics.max_drawdown * 100)?.toFixed(2)}%</p>
+                      </div>
+                      <div className="bg-gray-50 p-3 rounded-lg">
+                        <p className="text-sm text-gray-600">Volatility</p>
+                        <p className="font-semibold">{(portfolioMetrics.volatility * 100)?.toFixed(2)}%</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {tradingSignals.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">Active Trading Signals</h3>
+                    <div className="space-y-3">
+                      {tradingSignals.slice(0, 5).map((signal, index) => (
+                        <div key={index} className={`p-4 border rounded-lg ${
+                          signal.action === 'BUY' ? 'border-green-200 bg-green-50' : 'border-red-200 bg-red-50'
+                        }`}>
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-medium text-lg">{signal.ticker}</p>
+                              <p className={`text-sm font-semibold ${
+                                signal.action === 'BUY' ? 'text-green-700' : 'text-red-700'
+                              }`}>{signal.action} - {signal.strategy}</p>
+                              <p className="text-sm text-gray-600">
+                                Entry: ${signal.entry_price?.toFixed(2)} | Target: ${signal.target_price?.toFixed(2)}
+                              </p>
+                              <p className="text-xs text-gray-500">
+                                Expected Return: {(signal.expected_return * 100)?.toFixed(2)}%
+                              </p>
+                            </div>
+                            <div className="flex flex-col items-end gap-2">
+                              <span className={`px-2 py-1 text-xs rounded-full ${
+                                signal.confidence > 0.8 ? 'bg-green-100 text-green-800' :
+                                signal.confidence > 0.6 ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {(signal.confidence * 100).toFixed(0)}% confidence
+                              </span>
+                              <Button 
+                                size="sm" 
+                                onClick={() => executeSignal(signal)}
+                                disabled={!tradingBotStatus?.is_active}
+                              >
+                                Execute
+                              </Button>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {mlPredictions && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3">ML Predictions</h3>
+                    <div className="bg-indigo-50 p-4 rounded-lg">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div>
+                          <p className="text-sm text-indigo-600">Rebalancing Probability</p>
+                          <p className="font-semibold text-indigo-700">{(mlPredictions.rebalancing_prob * 100)?.toFixed(1)}%</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-indigo-600">Price Direction</p>
+                          <p className="font-semibold text-indigo-700">{mlPredictions.price_direction}</p>
+                        </div>
+                        <div>
+                          <p className="text-sm text-indigo-600">Confidence</p>
+                          <p className="font-semibold text-indigo-700">{(mlPredictions.confidence * 100)?.toFixed(1)}%</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="risk-dashboard" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <AlertCircle className="h-5 w-5" />
+                  Institutional Risk Dashboard
+                </CardTitle>
+                <CardDescription>
+                  Comprehensive risk analysis and portfolio monitoring
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <Button onClick={fetchRiskDashboard} variant="outline" className="mb-4">
+                  Refresh Risk Dashboard
+                </Button>
+
+                {riskDashboard && (
+                  <>
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3">Portfolio Risk Metrics</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-red-50 p-3 rounded-lg">
+                          <p className="text-sm text-red-600">VaR (95%)</p>
+                          <p className="font-semibold text-red-700">{(riskDashboard.portfolio_risk?.var_95 * 100)?.toFixed(2)}%</p>
+                        </div>
+                        <div className="bg-orange-50 p-3 rounded-lg">
+                          <p className="text-sm text-orange-600">Beta</p>
+                          <p className="font-semibold text-orange-700">{riskDashboard.portfolio_risk?.beta?.toFixed(2)}</p>
+                        </div>
+                        <div className="bg-yellow-50 p-3 rounded-lg">
+                          <p className="text-sm text-yellow-600">Volatility</p>
+                          <p className="font-semibold text-yellow-700">{(riskDashboard.portfolio_risk?.volatility * 100)?.toFixed(2)}%</p>
+                        </div>
+                        <div className="bg-blue-50 p-3 rounded-lg">
+                          <p className="text-sm text-blue-600">Liquidity Score</p>
+                          <p className="font-semibold text-blue-700">{riskDashboard.liquidity_risk?.liquidity_score?.toFixed(2)}</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3">Stress Testing Results</h3>
+                      <div className="bg-gray-50 p-4 rounded-lg">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-sm text-gray-600">Worst Case Loss</p>
+                            <p className="font-semibold">{(riskDashboard.stress_testing?.worst_case_loss * 100)?.toFixed(2)}%</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600">Scenarios Tested</p>
+                            <p className="font-semibold">{riskDashboard.stress_testing?.scenarios_tested}</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-gray-600">Stress VaR</p>
+                            <p className="font-semibold">{(riskDashboard.stress_testing?.stress_var * 100)?.toFixed(2)}%</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3">Scenario Analysis</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="bg-green-50 p-3 rounded-lg">
+                          <p className="text-sm text-green-600">Bull Case</p>
+                          <p className="font-semibold text-green-700">{(riskDashboard.scenario_analysis?.bull_case * 100)?.toFixed(2)}%</p>
+                        </div>
+                        <div className="bg-gray-50 p-3 rounded-lg">
+                          <p className="text-sm text-gray-600">Base Case</p>
+                          <p className="font-semibold text-gray-700">{(riskDashboard.scenario_analysis?.base_case * 100)?.toFixed(2)}%</p>
+                        </div>
+                        <div className="bg-red-50 p-3 rounded-lg">
+                          <p className="text-sm text-red-600">Bear Case</p>
+                          <p className="font-semibold text-red-700">{(riskDashboard.scenario_analysis?.bear_case * 100)?.toFixed(2)}%</p>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div>
+                      <h3 className="text-lg font-semibold mb-3">Risk Attribution</h3>
+                      <div className="bg-purple-50 p-4 rounded-lg">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                          <div>
+                            <p className="text-sm text-purple-600">Market Risk</p>
+                            <p className="font-semibold text-purple-700">{(riskDashboard.risk_attribution?.market_risk * 100)?.toFixed(1)}%</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-purple-600">Specific Risk</p>
+                            <p className="font-semibold text-purple-700">{(riskDashboard.risk_attribution?.specific_risk * 100)?.toFixed(1)}%</p>
+                          </div>
+                          <div>
+                            <p className="text-sm text-purple-600">Factor Risk</p>
+                            <p className="font-semibold text-purple-700">{(riskDashboard.risk_attribution?.factor_risk * 100)?.toFixed(1)}%</p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
           </TabsContent>
         </Tabs>
       </div>
