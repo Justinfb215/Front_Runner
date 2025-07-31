@@ -77,17 +77,20 @@ function App() {
         body: formData,
       });
 
+      console.log('Upload response status:', response.status);
       const result = await response.json();
+      console.log('Upload response data:', result);
       
       if (response.ok) {
         setUploadStatus('success');
-        setUploadMessage(`File uploaded successfully! ${result.rows} rows, ${result.columns.length} columns`);
+        setUploadMessage(`File uploaded successfully! ${result.total_sheets} sheets processed`);
         fetchProcessedData();
       } else {
         setUploadStatus('error');
         setUploadMessage(result.detail || 'Upload failed');
       }
     } catch (error) {
+      console.error('Upload error:', error);
       setUploadStatus('error');
       setUploadMessage('Network error during upload');
     }
